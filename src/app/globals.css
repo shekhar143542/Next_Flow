@@ -54,3 +54,12 @@ body {
     background-position: 10px 0, -10px 100%, 0 10px, 100% -10px;
   }
 }
+
+@keyframes llm-pending-pulse {
+  0%, 100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}

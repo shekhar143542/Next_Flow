@@ -7,6 +7,7 @@ import {
   useReactFlow,
   type EdgeProps,
 } from 'reactflow';
+import { useWorkflowStore } from '@/store/useWorkflowStore';
 
 export const RemovableEdge: FC<EdgeProps> = ({
   id,
@@ -21,6 +22,8 @@ export const RemovableEdge: FC<EdgeProps> = ({
 }) => {
   const { setEdges } = useReactFlow();
   const [isHovered, setIsHovered] = useState(false);
+  const activeEdgeId = useWorkflowStore((state) => state.executionState.activeEdgeId);
+  const isActive = activeEdgeId === id;
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -30,12 +33,25 @@ export const RemovableEdge: FC<EdgeProps> = ({
     targetPosition,
   });
   const strokeColor = (style?.stroke as string) ?? 'rgba(255,255,255,0.55)';
+  const animatedStyle = isActive
+    ? {
+      strokeDasharray: '6 6',
+      strokeDashoffset: 12,
+      animation: 'edge-flow 1s linear infinite',
+      filter: `drop-shadow(0 0 6px ${strokeColor})`,
+    }
+    : {};
 
   return (
     <>
+      <style>{`
+        @keyframes edge-flow {
+          to { stroke-dashoffset: 0; }
+        }
+      `}</style>
       <path
         d={edgePath}
-        style={{ ...style, stroke: strokeColor }}
+        style={{ ...style, stroke: strokeColor, ...animatedStyle }}
         className="react-flow__edge-path"
         markerEnd={markerEnd}
         onMouseEnter={() => setIsHovered(true)}

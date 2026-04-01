@@ -10,6 +10,7 @@ export type WorkflowNodeData = {
   systemPrompt?: string;
   userMessage?: string;
   output?: string;
+  executionOutput?: unknown;
   image?: string;
   imageUrl?: string;
   imagePreviewUrl?: string;
@@ -90,6 +91,12 @@ interface WorkflowState {
   connectSourceId: string | null;
   isLoading: boolean;
   isSaving: boolean;
+  executionState: {
+    runningNodeId: string | null;
+    activeEdgeId: string | null;
+    completedNodes: string[];
+    pendingNodeIds: string[];
+  };
   
   setWorkflowId: (id: string | null) => void;
   setWorkflowName: (name: string | null) => void;
@@ -111,6 +118,11 @@ interface WorkflowState {
   setConnectSourceId: (id: string | null) => void;
   setIsLoading: (loading: boolean) => void;
   setIsSaving: (saving: boolean) => void;
+  setRunningNode: (id: string | null) => void;
+  setActiveEdge: (id: string | null) => void;
+  setPendingNodeIds: (ids: string[]) => void;
+  markNodeComplete: (id: string) => void;
+  resetExecution: () => void;
   loadWorkflow: (nodes: WorkflowNode[], edges: WorkflowEdge[]) => void;
   clearWorkflow: () => void;
   undo: () => void;
@@ -130,6 +142,12 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
   connectSourceId: null,
   isLoading: false,
   isSaving: false,
+  executionState: {
+    runningNodeId: null,
+    activeEdgeId: null,
+    completedNodes: [],
+    pendingNodeIds: [],
+  },
 
   setWorkflowId: (id) => set({ workflowId: id }),
   setWorkflowName: (name) => set({ workflowName: name }),
@@ -183,6 +201,33 @@ export const useWorkflowStore = create<WorkflowState>((set) => ({
   setConnectSourceId: (id) => set({ connectSourceId: id }),
   setIsLoading: (loading) => set({ isLoading: loading }),
   setIsSaving: (saving) => set({ isSaving: saving }),
+  setRunningNode: (id) => set((state) => ({
+    executionState: { ...state.executionState, runningNodeId: id },
+  })),
+  setActiveEdge: (id) => set((state) => ({
+    executionState: { ...state.executionState, activeEdgeId: id },
+  })),
+  setPendingNodeIds: (ids) => set((state) => ({
+    executionState: { ...state.executionState, pendingNodeIds: ids },
+  })),
+  markNodeComplete: (id) => set((state) => {
+    if (state.executionState.completedNodes.includes(id)) return state;
+    return {
+      executionState: {
+        ...state.executionState,
+        completedNodes: [...state.executionState.completedNodes, id],
+      },
+    };
+  }),
+  resetExecution: () => set((state) => ({
+    executionState: {
+      ...state.executionState,
+      runningNodeId: null,
+      activeEdgeId: null,
+      completedNodes: [],
+      pendingNodeIds: [],
+    },
+  })),
   loadWorkflow: (nodes, edges) => set({
     nodes,
     edges,

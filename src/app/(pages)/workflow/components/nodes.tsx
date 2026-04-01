@@ -15,7 +15,7 @@ import {
 } from 'react';
 import { Handle, NodeProps, Position, useEdges, useNodes } from 'reactflow';
 import { useWorkflowStore } from '@/store/useWorkflowStore';
-import type { WorkflowNodeData } from '@/store/useWorkflowStore';
+import type { WorkflowEdge, WorkflowNode, WorkflowNodeData } from '@/store/useWorkflowStore';
 import {
   CopyIcon,
   FrameBadgeIcon,
@@ -32,8 +32,101 @@ type RunWorkflowButtonProps = {
   isVisible: boolean;
 };
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const NODE_RUN_DELAY_MS = 650;
+const EDGE_RUN_DELAY_MS = 350;
+
+const buildExecutionOrder = (nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowNode[] => {
+  const inDegree = new Map<string, number>();
+  const adjacency = new Map<string, string[]>();
+  const nodeIds = new Set<string>();
+
+  for (const node of nodes) {
+    nodeIds.add(node.id);
+    inDegree.set(node.id, 0);
+    adjacency.set(node.id, []);
+  }
+
+  for (const edge of edges) {
+    if (!nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
+    adjacency.get(edge.source)?.push(edge.target);
+    inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1);
+  }
+
+  const queue: string[] = [];
+  for (const [nodeId, degree] of inDegree.entries()) {
+    if (degree === 0) queue.push(nodeId);
+  }
+
+  const ordered: string[] = [];
+  while (queue.length) {
+    const nodeId = queue.shift();
+    if (!nodeId) continue;
+    ordered.push(nodeId);
+    for (const neighbor of adjacency.get(nodeId) ?? []) {
+      const nextDegree = (inDegree.get(neighbor) ?? 0) - 1;
+      inDegree.set(neighbor, nextDegree);
+      if (nextDegree === 0) queue.push(neighbor);
+    }
+  }
+
+  const seen = new Set(ordered);
+  for (const node of nodes) {
+    if (seen.has(node.id)) continue;
+    ordered.push(node.id);
+    seen.add(node.id);
+  }
+
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  return ordered.map((nodeId) => byId.get(nodeId)).filter(Boolean) as WorkflowNode[];
+};
+
+const getConnectedNodeIds = (startNodeId: string, edges: WorkflowEdge[]): string[] => {
+  const visited = new Set<string>();
+  const stack = [startNodeId];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+
+    for (const edge of edges) {
+      if (edge.source === current) {
+        stack.push(edge.target);
+      }
+    }
+  }
+
+  return Array.from(visited);
+};
+
+const hexToRgba = (hex: string, alpha: number) => {
+  const normalized = hex.replace('#', '');
+  if (normalized.length !== 6) return hex;
+  const r = Number.parseInt(normalized.slice(0, 2), 16);
+  const g = Number.parseInt(normalized.slice(2, 4), 16);
+  const b = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+const getExecutionShadow = (accent: string, isRunning: boolean, isCompleted: boolean) => {
+  if (isRunning) {
+    return `0 0 0 2px ${hexToRgba(accent, 0.85)}, 0 0 18px ${hexToRgba(accent, 0.45)}`;
+  }
+  if (isCompleted) {
+    return `0 0 0 1px ${hexToRgba(accent, 0.35)}`;
+  }
+  return '';
+};
+
 const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
   const workflowId = useWorkflowStore((state) => state.workflowId);
+  const setNodes = useWorkflowStore((state) => state.setNodes);
+  const setRunningNode = useWorkflowStore((state) => state.setRunningNode);
+  const setActiveEdge = useWorkflowStore((state) => state.setActiveEdge);
+  const setPendingNodeIds = useWorkflowStore((state) => state.setPendingNodeIds);
+  const markNodeComplete = useWorkflowStore((state) => state.markNodeComplete);
+  const resetExecution = useWorkflowStore((state) => state.resetExecution);
   const [isRunning, setIsRunning] = useState(false);
 
   const handleClick = useCallback(async (event: ReactMouseEvent<HTMLButtonElement>) => {
@@ -42,17 +135,100 @@ const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
     if (!workflowId || isRunning) return;
     setIsRunning(true);
     try {
-      await fetch('/api/run-workflow', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ workflowId }),
-      });
+      const { nodes: currentNodes, edges: currentEdges } = useWorkflowStore.getState();
+      const selectedNodeId = currentNodes.find((node) => node.selected)?.id;
+      const startNodeId = selectedNodeId;
+      if (!startNodeId) {
+        console.warn('Select a node to run the workflow');
+        return;
+      }
+
+      resetExecution();
+
+      const connectedNodeIds = getConnectedNodeIds(startNodeId, currentEdges);
+      const connectedNodeIdSet = new Set(connectedNodeIds);
+      const filteredNodes = currentNodes.filter((node) => connectedNodeIdSet.has(node.id));
+      const orderedNodes = buildExecutionOrder(filteredNodes, currentEdges);
+      const pendingNodeIds = filteredNodes
+        .filter((node) => node.type === 'llm')
+        .map((node) => node.id);
+
+      setPendingNodeIds(pendingNodeIds);
+
+      const runPromise = (async () => {
+        try {
+          const response = await fetch('/api/run-workflow', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ workflowId }),
+          });
+
+          if (!response.ok) {
+            console.error('Workflow run failed:', response.statusText);
+            return;
+          }
+
+          const data = await response.json().catch(() => ({}));
+          console.log('RUN RESPONSE:', data);
+
+          const outputs = data?.outputs;
+          if (!outputs || typeof outputs !== 'object') {
+            console.error('Outputs missing from API');
+            return;
+          }
+
+          setNodes(
+            (nodes) => {
+              const nextNodes = nodes.map((node) => {
+                const output = (outputs as Record<string, unknown>)[node.id];
+                if (output === undefined) return node;
+                return {
+                  ...node,
+                  data: {
+                    ...(node.data ?? {}),
+                    executionOutput: output,
+                  },
+                };
+              });
+              console.log('UPDATED NODES:', nextNodes);
+              return nextNodes;
+            },
+            { skipHistory: true },
+          );
+        } catch (error) {
+          console.error('Failed to trigger workflow job:', error);
+        } finally {
+          setPendingNodeIds([]);
+        }
+      })();
+
+      const animationPromise = (async () => {
+        for (const node of orderedNodes) {
+          setRunningNode(node.id);
+          await wait(NODE_RUN_DELAY_MS);
+          markNodeComplete(node.id);
+
+          const outgoing = currentEdges.filter(
+            (edge) => edge.source === node.id && connectedNodeIdSet.has(edge.target),
+          );
+          for (const edge of outgoing) {
+            setActiveEdge(edge.id);
+            await wait(EDGE_RUN_DELAY_MS);
+            setActiveEdge(null);
+          }
+
+          setRunningNode(null);
+        }
+      })();
+
+      await Promise.all([runPromise, animationPromise]);
+      resetExecution();
     } catch (error) {
-      console.error('Failed to trigger workflow job:', error);
+      console.error('Failed to run workflow animation:', error);
     } finally {
       setIsRunning(false);
     }
-  }, [isRunning, workflowId]);
+  }, [isRunning, markNodeComplete, resetExecution, setActiveEdge, setNodes, setPendingNodeIds, setRunningNode, workflowId]);
 
   if (!isVisible || !workflowId) return null;
 
@@ -89,8 +265,9 @@ const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
         event.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)';
       }}
       aria-label="Run workflow"
+      aria-busy={isRunning}
     >
-      {isRunning ? 'Running' : 'Run'}
+      Run
     </button>
   );
 };
@@ -105,6 +282,10 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
   const textareaWrapperRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const setNodes = useWorkflowStore((state) => state.setNodes);
+  const accent = '#f0a500';
+  const isRunning = useWorkflowStore((state) => state.executionState.runningNodeId === id);
+  const isCompleted = useWorkflowStore((state) => state.executionState.completedNodes.includes(id));
+  const isAwaitingResponse = useWorkflowStore((state) => state.executionState.pendingNodeIds.includes(id));
   const edges = useEdges();
   const nodes = useNodes<WorkflowNodeData>();
   const textValue = data?.text ?? '';
@@ -124,6 +305,11 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
   const isConnected = useMemo(() => (
     edges.some((edge) => edge.source === id || edge.target === id)
   ), [edges, id]);
+  const baseShadow = selected
+    ? '0 0 0 2px rgba(240,165,0,0.12), 0 8px 32px rgba(0,0,0,0.5)'
+    : '0 8px 32px rgba(0,0,0,0.5)';
+  const executionShadow = getExecutionShadow(accent, isRunning, isCompleted);
+  const boxShadow = executionShadow ? `${baseShadow}, ${executionShadow}` : baseShadow;
 
   const handleCopy = useCallback(() => {
     if (!displayText.trim()) return;
@@ -168,9 +354,7 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
         border: selected
           ? '2px solid rgba(240,165,0,0.9)'
           : '1px solid #2a2d38',
-        boxShadow: selected
-          ? '0 0 0 2px rgba(240,165,0,0.12), 0 8px 32px rgba(0,0,0,0.5)'
-          : '0 8px 32px rgba(0,0,0,0.5)',
+        boxShadow,
         fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif",
         userSelect: 'none',
         position: 'relative',
@@ -461,6 +645,9 @@ const WorkflowNodeShell: FC<NodeProps<WorkflowNodeData>> = ({ data, selected, is
 const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnectable }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const setNodes = useWorkflowStore((state) => state.setNodes);
+  const accent = '#2f92ff';
+  const isRunning = useWorkflowStore((state) => state.executionState.runningNodeId === id);
+  const isCompleted = useWorkflowStore((state) => state.executionState.completedNodes.includes(id));
   const [title, setTitle] = useState(() => (data?.label || 'Image').replace(' Node', ''));
   const [isHovered, setIsHovered] = useState(false);
   const edges = useEdges();
@@ -469,6 +656,11 @@ const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
     edges.some((edge) => edge.source === id || edge.target === id)
   ), [edges, id]);
   const imagePreview = data?.imageUrl || data?.imagePreviewUrl || data?.image || '';
+  const baseShadow = selected
+    ? '0 0 0 2px rgba(47,146,255,0.18), 0 8px 32px rgba(0,0,0,0.5)'
+    : '0 8px 32px rgba(0,0,0,0.5)';
+  const executionShadow = getExecutionShadow(accent, isRunning, isCompleted);
+  const boxShadow = executionShadow ? `${baseShadow}, ${executionShadow}` : baseShadow;
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
     e.stopPropagation();
@@ -520,9 +712,7 @@ const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
         border: selected
           ? '2px solid rgba(47,146,255,0.9)'
           : '1px solid #2a2d38',
-        boxShadow: selected
-          ? '0 0 0 2px rgba(47,146,255,0.18), 0 8px 32px rgba(0,0,0,0.5)'
-          : '0 8px 32px rgba(0,0,0,0.5)',
+        boxShadow,
         fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif",
         userSelect: 'none',
         position: 'relative',
@@ -685,12 +875,20 @@ const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
 const VideoNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnectable }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [title, setTitle] = useState(() => (data?.label || 'Video').replace(' Node', ''));
+  const accent = '#1eea6a';
+  const isRunning = useWorkflowStore((state) => state.executionState.runningNodeId === id);
+  const isCompleted = useWorkflowStore((state) => state.executionState.completedNodes.includes(id));
   const [isHovered, setIsHovered] = useState(false);
   const edges = useEdges();
   const hasIncoming = useMemo(() => edges.some((edge) => edge.target === id), [edges, id]);
   const isConnected = useMemo(() => (
     edges.some((edge) => edge.source === id || edge.target === id)
   ), [edges, id]);
+  const baseShadow = selected
+    ? '0 0 0 2px rgba(30,234,106,0.2), 0 8px 32px rgba(0,0,0,0.5)'
+    : '0 8px 32px rgba(0,0,0,0.5)';
+  const executionShadow = getExecutionShadow(accent, isRunning, isCompleted);
+  const boxShadow = executionShadow ? `${baseShadow}, ${executionShadow}` : baseShadow;
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
     e.stopPropagation();
@@ -710,9 +908,7 @@ const VideoNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
         border: selected
           ? '2px solid rgba(30,234,106,0.9)'
           : '1px solid #2a2d38',
-        boxShadow: selected
-          ? '0 0 0 2px rgba(30,234,106,0.2), 0 8px 32px rgba(0,0,0,0.5)'
-          : '0 8px 32px rgba(0,0,0,0.5)',
+        boxShadow,
         fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif",
         userSelect: 'none',
         position: 'relative',
@@ -870,9 +1066,16 @@ const FrameExtractorNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selecte
   const extractedFrame = data?.extractedFrame ?? '';
   const frameAccent = '#2f92ff';
   const inputAccent = '#1eea6a';
+  const isRunning = useWorkflowStore((state) => state.executionState.runningNodeId === id);
+  const isCompleted = useWorkflowStore((state) => state.executionState.completedNodes.includes(id));
   const isConnected = useMemo(() => (
     edges.some((edge) => edge.source === id || edge.target === id)
   ), [edges, id]);
+  const baseShadow = selected
+    ? '0 0 0 2px rgba(47,146,255,0.18), 0 8px 32px rgba(0,0,0,0.5)'
+    : '0 8px 32px rgba(0,0,0,0.5)';
+  const executionShadow = getExecutionShadow(frameAccent, isRunning, isCompleted);
+  const boxShadow = executionShadow ? `${baseShadow}, ${executionShadow}` : baseShadow;
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
     e.stopPropagation();
@@ -1017,9 +1220,7 @@ const FrameExtractorNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selecte
         border: selected
           ? `2px solid ${frameAccent}`
           : '1px solid #2a2d38',
-        boxShadow: selected
-          ? '0 0 0 2px rgba(47,146,255,0.18), 0 8px 32px rgba(0,0,0,0.5)'
-          : '0 8px 32px rgba(0,0,0,0.5)',
+        boxShadow,
         fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif",
         userSelect: 'none',
         position: 'relative',
@@ -1277,8 +1478,18 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
   const systemPrompt = data?.systemPrompt ?? '';
   const userMessage = data?.userMessage ?? '';
   const output = data?.output ?? '';
+  const executionOutput = data?.executionOutput;
+  const outputValue = executionOutput ?? output;
+  const outputText = typeof outputValue === 'string'
+    ? outputValue
+    : outputValue
+      ? JSON.stringify(outputValue, null, 2)
+      : '';
   const llmAccent = '#f3a855';
   const imageAccent = '#2f92ff';
+  const isRunning = useWorkflowStore((state) => state.executionState.runningNodeId === id);
+  const isCompleted = useWorkflowStore((state) => state.executionState.completedNodes.includes(id));
+  const isAwaitingResponse = useWorkflowStore((state) => state.executionState.pendingNodeIds.includes(id));
   const llmHandleOffsets = {
     text: 264,
     image: 394,
@@ -1363,7 +1574,8 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
 
       if (sourceNode.type === 'llm') {
         promptInput = true;
-        if (sourceNode.data?.output) textParts.push(sourceNode.data.output);
+        const llmValue = sourceNode.data?.executionOutput ?? sourceNode.data?.output;
+        if (typeof llmValue === 'string' && llmValue) textParts.push(llmValue);
         continue;
       }
     }
@@ -1385,6 +1597,11 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
   }, [updateNodeData]);
 
   const promptValue = hasPromptInput ? incomingPromptText : userMessage;
+  const baseShadow = selected
+    ? '0 0 0 2px rgba(243,168,85,0.18), 0 10px 30px rgba(0,0,0,0.6)'
+    : '0 10px 30px rgba(0,0,0,0.55)';
+  const executionShadow = getExecutionShadow(llmAccent, isRunning, isCompleted);
+  const boxShadow = executionShadow ? `${baseShadow}, ${executionShadow}` : baseShadow;
 
   const containerStyle = {
     width: 264,
@@ -1394,9 +1611,7 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
     border: selected
       ? `2px solid ${llmAccent}`
       : '1px solid #2a2d38',
-    boxShadow: selected
-      ? '0 0 0 2px rgba(243,168,85,0.18), 0 10px 30px rgba(0,0,0,0.6)'
-      : '0 10px 30px rgba(0,0,0,0.55)',
+    boxShadow,
     fontFamily: "'Sora', 'Segoe UI', sans-serif",
     color: 'var(--llm-text)',
     userSelect: 'none',
@@ -1418,6 +1633,19 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
+      <div
+        aria-hidden
+        style={{
+          position: 'absolute',
+          inset: -2,
+          borderRadius: 20,
+          border: `2px solid ${hexToRgba(llmAccent, 0.7)}`,
+          opacity: isAwaitingResponse ? 1 : 0,
+          pointerEvents: 'none',
+          boxShadow: `0 0 0 2px ${hexToRgba(llmAccent, 0.2)}, 0 0 18px ${hexToRgba(llmAccent, 0.5)}`,
+          animation: isAwaitingResponse ? 'llm-pending-pulse 1.1s ease-in-out infinite' : 'none',
+        }}
+      />
       <RunWorkflowButton isVisible={isHovered && isConnected} />
       <div style={{
         position: 'absolute',
@@ -1445,7 +1673,7 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
         </div>
         <textarea
           className="nodrag"
-          value={output}
+          value={outputText}
           placeholder="No output yet."
           readOnly
           rows={7}
@@ -1457,7 +1685,7 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
             background: 'var(--llm-panel)',
             border: '1px solid var(--llm-border)',
             borderRadius: 12,
-            color: output ? 'var(--llm-text)' : 'var(--llm-muted)',
+            color: outputText ? 'var(--llm-text)' : 'var(--llm-muted)',
             fontFamily: "'Sora', 'Segoe UI', sans-serif",
             fontSize: 12,
             lineHeight: 1.6,
@@ -1716,9 +1944,16 @@ const CropNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
   const croppedImage = data?.croppedImage ?? '';
   const outputImage = data?.outputImage ?? '';
   const cropAccent = '#58d0ff';
+  const isRunning = useWorkflowStore((state) => state.executionState.runningNodeId === id);
+  const isCompleted = useWorkflowStore((state) => state.executionState.completedNodes.includes(id));
   const isConnected = useMemo(() => (
     edges.some((edge) => edge.source === id || edge.target === id)
   ), [edges, id]);
+  const baseShadow = selected
+    ? '0 0 0 2px rgba(88,208,255,0.18), 0 8px 32px rgba(0,0,0,0.5)'
+    : '0 8px 32px rgba(0,0,0,0.5)';
+  const executionShadow = getExecutionShadow(cropAccent, isRunning, isCompleted);
+  const boxShadow = executionShadow ? `${baseShadow}, ${executionShadow}` : baseShadow;
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
     e.stopPropagation();
@@ -1911,9 +2146,7 @@ const CropNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
         border: selected
           ? `2px solid ${cropAccent}`
           : '1px solid #2a2d38',
-        boxShadow: selected
-          ? '0 0 0 2px rgba(88,208,255,0.18), 0 8px 32px rgba(0,0,0,0.5)'
-          : '0 8px 32px rgba(0,0,0,0.5)',
+        boxShadow,
         fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif",
         userSelect: 'none',
         position: 'relative',
