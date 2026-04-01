@@ -101,8 +101,7 @@ const HANDLE_OFFSETS: Record<
     source: { image: 92 },
   },
   llm: {
-    target: { text: 78, image: 140 },
-    source: { [DEFAULT_HANDLE_ID]: 110 },
+    target: { text: 110, image: 164, system: 238 },
   },
   crop: {
     target: { image: 88 },

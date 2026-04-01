@@ -79,8 +79,7 @@ const CUT_HANDLE_OFFSETS: Record<
     source: { image: 92 },
   },
   llm: {
-    target: { text: 78, image: 140 },
-    source: { default: 110 },
+    target: { text: 264, image: 394, system: 570 },
   },
   crop: {
     target: { image: 88 },

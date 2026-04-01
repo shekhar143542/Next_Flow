@@ -28,11 +28,79 @@ import {
 } from './icons';
 import { getNodeWireColor } from './edges';
 
+type RunWorkflowButtonProps = {
+  isVisible: boolean;
+};
+
+const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
+  const workflowId = useWorkflowStore((state) => state.workflowId);
+  const [isRunning, setIsRunning] = useState(false);
+
+  const handleClick = useCallback(async (event: ReactMouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (!workflowId || isRunning) return;
+    setIsRunning(true);
+    try {
+      await fetch('/api/run-workflow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ workflowId }),
+      });
+    } catch (error) {
+      console.error('Failed to trigger workflow job:', error);
+    } finally {
+      setIsRunning(false);
+    }
+  }, [isRunning, workflowId]);
+
+  if (!isVisible || !workflowId) return null;
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      onPointerDown={(event) => event.stopPropagation()}
+      onMouseDown={(event) => event.stopPropagation()}
+      style={{
+        position: 'absolute',
+        top: 6,
+        right: 6,
+        zIndex: 3,
+        background: '#101217',
+        border: '1px solid rgba(255,255,255,0.12)',
+        color: '#f3f4f8',
+        fontSize: 11,
+        fontWeight: 600,
+        padding: '4px 10px',
+        borderRadius: 999,
+        cursor: isRunning ? 'progress' : 'pointer',
+        boxShadow: '0 6px 16px rgba(0,0,0,0.35)',
+        transition: 'transform 0.12s, background 0.12s, border-color 0.12s',
+      }}
+      onMouseEnter={(event) => {
+        event.currentTarget.style.transform = 'translateY(-1px)';
+        event.currentTarget.style.background = '#161a21';
+        event.currentTarget.style.borderColor = 'rgba(255,255,255,0.28)';
+      }}
+      onMouseLeave={(event) => {
+        event.currentTarget.style.transform = 'translateY(0)';
+        event.currentTarget.style.background = '#101217';
+        event.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)';
+      }}
+      aria-label="Run workflow"
+    >
+      {isRunning ? 'Running' : 'Run'}
+    </button>
+  );
+};
+
 /* ─────────────────────────── Text Node (custom design) ─────────────────────────── */
 
 const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnectable }) => {
   const [title, setTitle] = useState('Text');
   const [copied, setCopied] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const textareaWrapperRef = useRef<HTMLDivElement>(null);
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -53,6 +121,9 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
     return { hasTextParent: false, parentText: '' };
   }, [edges, nodes, id]);
   const displayText = hasTextParent ? parentText : textValue;
+  const isConnected = useMemo(() => (
+    edges.some((edge) => edge.source === id || edge.target === id)
+  ), [edges, id]);
 
   const handleCopy = useCallback(() => {
     if (!displayText.trim()) return;
@@ -104,7 +175,10 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
         userSelect: 'none',
         position: 'relative',
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
+      <RunWorkflowButton isVisible={isHovered && isConnected} />
       <style>{`
         .text-node-textarea::-webkit-scrollbar {
           width: 6px;
@@ -316,10 +390,10 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
         style={{
           width: 12,
           height: 12,
-          background: '#2f92ff',
-          border: '2px solid #151515',
+          background: '#f0a500',
+          border: '2px solid #1a1d24',
           borderRadius: '50%',
-          boxShadow: '0 0 0 1.5px rgba(47,146,255,0.9)',
+          boxShadow: '0 0 0 1.5px #f0a500',
           left: -6,
         }}
       />
@@ -388,8 +462,12 @@ const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
   const fileInputRef = useRef<HTMLInputElement>(null);
   const setNodes = useWorkflowStore((state) => state.setNodes);
   const [title, setTitle] = useState(() => (data?.label || 'Image').replace(' Node', ''));
-  const edges = useWorkflowStore((state) => state.edges);
-  const hasIncoming = edges.some((edge) => edge.target === id);
+  const [isHovered, setIsHovered] = useState(false);
+  const edges = useEdges();
+  const hasIncoming = useMemo(() => edges.some((edge) => edge.target === id), [edges, id]);
+  const isConnected = useMemo(() => (
+    edges.some((edge) => edge.source === id || edge.target === id)
+  ), [edges, id]);
   const imagePreview = data?.imageUrl || data?.imagePreviewUrl || data?.image || '';
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
@@ -455,7 +533,10 @@ const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
       }}
       onMouseDown={stopPropagation}
       onTouchStart={stopPropagation}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
+      <RunWorkflowButton isVisible={isHovered && isConnected} />
       <style>{`
         @keyframes image-receiving-sweep {
           0% { background-position: 180% 0; }
@@ -604,8 +685,12 @@ const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
 const VideoNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnectable }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [title, setTitle] = useState(() => (data?.label || 'Video').replace(' Node', ''));
-  const edges = useWorkflowStore((state) => state.edges);
-  const hasIncoming = edges.some((edge) => edge.target === id);
+  const [isHovered, setIsHovered] = useState(false);
+  const edges = useEdges();
+  const hasIncoming = useMemo(() => edges.some((edge) => edge.target === id), [edges, id]);
+  const isConnected = useMemo(() => (
+    edges.some((edge) => edge.source === id || edge.target === id)
+  ), [edges, id]);
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
     e.stopPropagation();
@@ -638,7 +723,10 @@ const VideoNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
       }}
       onMouseDown={stopPropagation}
       onTouchStart={stopPropagation}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
+      <RunWorkflowButton isVisible={isHovered && isConnected} />
       <style>{`
         @keyframes video-receiving-sweep {
           0% { background-position: 180% 0; }
@@ -776,11 +864,15 @@ const FrameExtractorNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selecte
   const nodes = useNodes<WorkflowNodeData>();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isHovered, setIsHovered] = useState(false);
   const [duration, setDuration] = useState(0);
   const [frameTime, setFrameTime] = useState(() => data?.frameTime ?? 0);
   const extractedFrame = data?.extractedFrame ?? '';
   const frameAccent = '#2f92ff';
   const inputAccent = '#1eea6a';
+  const isConnected = useMemo(() => (
+    edges.some((edge) => edge.source === id || edge.target === id)
+  ), [edges, id]);
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
     e.stopPropagation();
@@ -936,7 +1028,10 @@ const FrameExtractorNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selecte
         gap: 10,
         padding: '18px 16px 16px',
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
+      <RunWorkflowButton isVisible={isHovered && isConnected} />
       <style>{`
         .frame-slider {
           -webkit-appearance: none;
@@ -1175,12 +1270,23 @@ const FrameExtractorNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selecte
 };
 const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnectable }) => {
   const setNodes = useWorkflowStore((state) => state.setNodes);
+  const graphEdges = useEdges();
   const edges = useWorkflowStore((state) => state.edges);
   const nodes = useWorkflowStore((state) => state.nodes);
+  const [isHovered, setIsHovered] = useState(false);
   const systemPrompt = data?.systemPrompt ?? '';
   const userMessage = data?.userMessage ?? '';
   const output = data?.output ?? '';
   const llmAccent = '#f3a855';
+  const imageAccent = '#2f92ff';
+  const llmHandleOffsets = {
+    text: 264,
+    image: 394,
+    system: 570,
+  };
+  const isConnected = useMemo(() => (
+    graphEdges.some((edge) => edge.source === id || edge.target === id)
+  ), [graphEdges, id]);
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
     e.stopPropagation();
@@ -1200,13 +1306,34 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
     );
   }, [id, setNodes]);
 
-  const { incomingText, hasImageInput, imageUrl } = useMemo(() => {
+  const { hasPromptInput, incomingPromptText, hasImageInput, imageUrl } = useMemo(() => {
     const incomingEdges = edges.filter((edge) => edge.target === id);
     if (incomingEdges.length === 0) {
-      return { incomingText: '', hasImageInput: false, imageUrl: '' };
+      return {
+        hasPromptInput: false,
+        incomingPromptText: '',
+        hasImageInput: false,
+        imageUrl: '',
+      };
     }
 
+    const resolveTextDisplay = (nodeId: string) => {
+      const node = nodes.find((item) => item.id === nodeId);
+      if (!node || node.type !== 'text') return '';
+
+      const parentEdge = edges.find((edge) => edge.target === nodeId);
+      if (parentEdge) {
+        const parentNode = nodes.find((item) => item.id === parentEdge.source);
+        if (parentNode?.type === 'text') {
+          return parentNode.data?.text ?? '';
+        }
+      }
+
+      return node.data?.text ?? '';
+    };
+
     const textParts: string[] = [];
+    let promptInput = false;
     let imageInput = false;
     let previewUrl = '';
 
@@ -1223,19 +1350,27 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
         continue;
       }
 
+      if (edge.targetHandle && edge.targetHandle !== 'text') {
+        continue;
+      }
+
       if (sourceNode.type === 'text') {
-        if (sourceNode.data?.text) textParts.push(sourceNode.data.text);
+        promptInput = true;
+        const resolvedText = resolveTextDisplay(sourceNode.id);
+        if (resolvedText) textParts.push(resolvedText);
         continue;
       }
 
       if (sourceNode.type === 'llm') {
+        promptInput = true;
         if (sourceNode.data?.output) textParts.push(sourceNode.data.output);
         continue;
       }
     }
 
     return {
-      incomingText: textParts.filter(Boolean).join('\n'),
+      hasPromptInput: promptInput,
+      incomingPromptText: textParts.filter(Boolean).join('\n'),
       hasImageInput: imageInput,
       imageUrl: previewUrl,
     };
@@ -1249,44 +1384,41 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
     updateNodeData({ userMessage: event.target.value });
   }, [updateNodeData]);
 
-  const handleRun = useCallback(() => {
-    const payloadParts = [] as string[];
-    if (incomingText.trim()) payloadParts.push(`Input:\n${incomingText}`);
-    if (systemPrompt.trim()) payloadParts.push(`System:\n${systemPrompt}`);
-    if (userMessage.trim()) payloadParts.push(`User:\n${userMessage}`);
-    if (hasImageInput) payloadParts.push('[Image input connected]');
+  const promptValue = hasPromptInput ? incomingPromptText : userMessage;
 
-    const payload = payloadParts.join('\n\n');
-    const response = payload
-      ? `Mock response based on:\n\n${payload}`
-      : 'Mock response: (no input provided)';
-
-    console.log('LLM node run', { id, payload });
-    updateNodeData({ output: response });
-  }, [hasImageInput, id, incomingText, systemPrompt, updateNodeData, userMessage]);
+  const containerStyle = {
+    width: 264,
+    minHeight: 420,
+    background: 'linear-gradient(180deg, #17181f 0%, #0f1116 100%)',
+    borderRadius: 18,
+    border: selected
+      ? `2px solid ${llmAccent}`
+      : '1px solid #2a2d38',
+    boxShadow: selected
+      ? '0 0 0 2px rgba(243,168,85,0.18), 0 10px 30px rgba(0,0,0,0.6)'
+      : '0 10px 30px rgba(0,0,0,0.55)',
+    fontFamily: "'Sora', 'Segoe UI', sans-serif",
+    color: 'var(--llm-text)',
+    userSelect: 'none',
+    position: 'relative',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+    padding: '18px 16px 16px',
+    ['--llm-text' as any]: '#e6e8ee',
+    ['--llm-muted' as any]: '#9aa3ad',
+    ['--llm-border' as any]: '#262a33',
+    ['--llm-panel' as any]: '#0b0d12',
+    ['--llm-soft' as any]: '#131722',
+  } as CSSProperties;
 
   return (
     <div
-      style={{
-        width: 250,
-        minHeight: 260,
-        background: '#151515',
-        borderRadius: 16,
-        border: selected
-          ? `2px solid ${llmAccent}`
-          : '1px solid #2a2d38',
-        boxShadow: selected
-          ? '0 0 0 2px rgba(243,168,85,0.18), 0 8px 32px rgba(0,0,0,0.5)'
-          : '0 8px 32px rgba(0,0,0,0.5)',
-        fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif",
-        userSelect: 'none',
-        position: 'relative',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 10,
-        padding: '18px 16px 16px',
-      }}
+      style={containerStyle}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
+      <RunWorkflowButton isVisible={isHovered && isConnected} />
       <div style={{
         position: 'absolute',
         top: -24,
@@ -1294,181 +1426,230 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
         display: 'flex',
         alignItems: 'center',
         gap: 8,
-        color: '#9aa3ad',
+        color: 'var(--llm-muted)',
         fontSize: 12,
-        fontWeight: 500,
+        fontWeight: 600,
       }}>
         <LlmBadgeIcon />
         <span>LLM Node</span>
       </div>
 
       <div>
-        <div style={{ fontSize: 10, fontWeight: 500, color: '#7a7d8c', marginBottom: 6 }}>
-          Input
-        </div>
-        <div
-          style={{
-            background: '#0b0b0b',
-            border: '1px solid #23262f',
-            borderRadius: 8,
-            padding: '7px 9px',
-            fontSize: 11,
-            color: incomingText ? '#c8cad4' : '#5b5f6d',
-            lineHeight: 1.5,
-            maxHeight: 70,
-            overflow: 'auto',
-            whiteSpace: 'pre-wrap',
-            userSelect: 'text',
-          }}
-          onWheel={stopWheelPropagation}
-        >
-          {incomingText || 'No text input connected.'}
-        </div>
-      </div>
-
-      <div>
-        <div style={{ fontSize: 10, fontWeight: 500, color: '#7a7d8c', marginBottom: 6 }}>
-          System prompt
-        </div>
-        <textarea
-          className="nodrag"
-          value={systemPrompt}
-          onChange={handleSystemChange}
-          placeholder="You are a helpful assistant..."
-          rows={2}
-          onWheel={stopWheelPropagation}
-          onPointerDown={stopPropagation}
-          style={{
-            width: '100%',
-            minHeight: 48,
-            background: '#0b0b0b',
-            border: '1px solid #23262f',
-            borderRadius: 8,
-            color: '#c8cad4',
-            fontFamily: "'JetBrains Mono', 'Fira Mono', monospace",
-            fontSize: 11,
-            lineHeight: 1.5,
-            padding: '8px 10px',
-            resize: 'vertical',
-            outline: 'none',
-            boxSizing: 'border-box',
-            userSelect: 'text',
-          }}
-          onMouseDown={stopPropagation}
-        />
-      </div>
-
-      <div>
-        <div style={{ fontSize: 10, fontWeight: 500, color: '#7a7d8c', marginBottom: 6 }}>
-          User message
-        </div>
-        <textarea
-          className="nodrag"
-          value={userMessage}
-          onChange={handleUserChange}
-          placeholder="Ask the model..."
-          rows={2}
-          onWheel={stopWheelPropagation}
-          onPointerDown={stopPropagation}
-          style={{
-            width: '100%',
-            minHeight: 48,
-            background: '#0b0b0b',
-            border: '1px solid #23262f',
-            borderRadius: 8,
-            color: '#c8cad4',
-            fontFamily: "'JetBrains Mono', 'Fira Mono', monospace",
-            fontSize: 11,
-            lineHeight: 1.5,
-            padding: '8px 10px',
-            resize: 'vertical',
-            outline: 'none',
-            boxSizing: 'border-box',
-            userSelect: 'text',
-          }}
-          onMouseDown={stopPropagation}
-        />
-      </div>
-
-      <div>
-        <div style={{ fontSize: 10, fontWeight: 500, color: '#7a7d8c', marginBottom: 6 }}>
-          Image input
-        </div>
-        <div
-          style={{
-            height: 70,
-            borderRadius: 10,
-            border: '1px solid #23262f',
-            background: '#0b0b0b',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#5b5f6d',
-            fontSize: 11,
-            overflow: 'hidden',
-          }}
-        >
-          {hasImageInput ? (
-            imageUrl ? (
-              <img
-                src={imageUrl}
-                alt="Connected input"
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              />
-            ) : (
-              <span>Image input connected</span>
-            )
-          ) : (
-            <span>No image connected</span>
-          )}
-        </div>
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <button
-          type="button"
-          onClick={handleRun}
-          onMouseDown={stopPropagation}
-          style={{
-            background: llmAccent,
-            border: 'none',
-            color: '#1a1d24',
-            fontSize: 12,
-            fontWeight: 600,
-            padding: '6px 14px',
-            borderRadius: 10,
-            cursor: 'pointer',
-            transition: 'transform 0.15s',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
-        >
-          Run
-        </button>
-      </div>
-
-      <div>
-        <div style={{ fontSize: 10, fontWeight: 500, color: '#7a7d8c', marginBottom: 6 }}>
+        <div style={{
+          fontSize: 11,
+          fontWeight: 600,
+          color: 'var(--llm-muted)',
+          marginBottom: 6,
+        }}>
           Output
         </div>
-        <div
+        <textarea
+          className="nodrag"
+          value={output}
+          placeholder="No output yet."
+          readOnly
+          rows={7}
+          onWheel={stopWheelPropagation}
+          onPointerDown={stopPropagation}
           style={{
-            background: '#0b0b0b',
-            border: '1px solid #23262f',
-            borderRadius: 8,
-            padding: '8px 10px',
-            fontSize: 11,
-            color: output ? '#c8cad4' : '#5b5f6d',
-            lineHeight: 1.5,
-            maxHeight: 90,
-            overflow: 'auto',
-            whiteSpace: 'pre-wrap',
+            width: '100%',
+            minHeight: 140,
+            background: 'var(--llm-panel)',
+            border: '1px solid var(--llm-border)',
+            borderRadius: 12,
+            color: output ? 'var(--llm-text)' : 'var(--llm-muted)',
+            fontFamily: "'Sora', 'Segoe UI', sans-serif",
+            fontSize: 12,
+            lineHeight: 1.6,
+            padding: '10px 12px',
+            resize: 'vertical',
+            outline: 'none',
+            boxSizing: 'border-box',
             userSelect: 'text',
           }}
-          onWheel={stopWheelPropagation}
-        >
-          {output || 'No output yet.'}
+          onMouseDown={stopPropagation}
+        />
+      </div>
+
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--llm-muted)', marginBottom: 6 }}>
+          Prompt
         </div>
+        <div style={{ position: 'relative' }}>
+          <textarea
+            className="nodrag"
+            value={promptValue}
+            onChange={handleUserChange}
+            placeholder="Write a prompt..."
+            readOnly={hasPromptInput}
+            rows={5}
+            onWheel={stopWheelPropagation}
+            onPointerDown={stopPropagation}
+            style={{
+              width: '100%',
+              minHeight: 110,
+              background: 'var(--llm-panel)',
+              border: '1px solid var(--llm-border)',
+              borderRadius: 12,
+              color: hasPromptInput ? 'rgba(200,200,200,0.35)' : 'var(--llm-text)',
+              fontFamily: "'Sora', 'Segoe UI', sans-serif",
+              fontSize: 12,
+              lineHeight: 1.5,
+              padding: '9px 10px',
+              resize: 'vertical',
+              outline: 'none',
+              boxSizing: 'border-box',
+              userSelect: 'text',
+              caretColor: hasPromptInput ? 'transparent' : llmAccent,
+              textShadow: hasPromptInput ? '0 0 6px rgba(0,0,0,0.6)' : 'none',
+            }}
+            onMouseDown={stopPropagation}
+          />
+        </div>
+      </div>
+
+      <div>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: 6,
+        }}>
+          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--llm-muted)' }}>
+            Image
+          </span>
+          <button
+            type="button"
+            onMouseDown={stopPropagation}
+            onPointerDown={stopPropagation}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 6,
+              background: 'var(--llm-soft)',
+              border: '1px solid var(--llm-border)',
+              color: 'var(--llm-text)',
+              fontSize: 10,
+              fontWeight: 600,
+              padding: '4px 8px',
+              borderRadius: 999,
+              cursor: 'pointer',
+            }}
+          >
+            <UploadIcon />
+            <span>Add file</span>
+          </button>
+        </div>
+        <div style={{ position: 'relative' }}>
+          <div
+            style={{
+              height: 76,
+              borderRadius: 12,
+              border: '1px solid var(--llm-border)',
+              background: 'var(--llm-panel)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: hasImageInput ? 'var(--llm-text)' : 'var(--llm-muted)',
+              fontSize: 11,
+              overflow: 'hidden',
+            }}
+          >
+            {hasImageInput ? (
+              imageUrl ? (
+                <img
+                  src={imageUrl}
+                  alt="Connected input"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              ) : (
+                <span>Image input connected</span>
+              )
+            ) : (
+              <span>No image connected</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--llm-muted)', marginTop: 2 }}>
+        Settings
+      </div>
+
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+      }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--llm-muted)' }}>
+          Model
+        </span>
+        <div
+          style={{
+            background: 'var(--llm-panel)',
+            border: '1px solid var(--llm-border)',
+            borderRadius: 999,
+            padding: '4px 10px',
+            fontSize: 11,
+            color: 'var(--llm-text)',
+          }}
+        >
+          GPT-4o Mini
+        </div>
+      </div>
+
+      <div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--llm-muted)', marginBottom: 6 }}>
+          System Prompt
+        </div>
+        <div style={{ position: 'relative' }}>
+          <textarea
+            className="nodrag"
+            value={systemPrompt}
+            onChange={handleSystemChange}
+            placeholder="You are a friendly and helpful assistant."
+            rows={3}
+            onWheel={stopWheelPropagation}
+            onPointerDown={stopPropagation}
+            style={{
+              width: '100%',
+              minHeight: 70,
+              background: 'var(--llm-panel)',
+              border: '1px solid var(--llm-border)',
+              borderRadius: 12,
+              color: 'var(--llm-text)',
+              fontFamily: "'Sora', 'Segoe UI', sans-serif",
+              fontSize: 12,
+              lineHeight: 1.5,
+              padding: '9px 10px',
+              resize: 'vertical',
+              outline: 'none',
+              boxSizing: 'border-box',
+              userSelect: 'text',
+            }}
+            onMouseDown={stopPropagation}
+          />
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+        <button
+          type="button"
+          onMouseDown={stopPropagation}
+          onPointerDown={stopPropagation}
+          style={{
+            background: 'var(--llm-soft)',
+            border: '1px solid var(--llm-border)',
+            color: 'var(--llm-text)',
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '6px 12px',
+            borderRadius: 999,
+            cursor: 'pointer',
+          }}
+        >
+          Presets
+        </button>
       </div>
 
       <Handle
@@ -1484,11 +1665,27 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
           borderRadius: '50%',
           boxShadow: `0 0 0 1.5px ${llmAccent}`,
           left: -6,
-          top: 78,
+          top: llmHandleOffsets.text,
         }}
       />
       <Handle
         id="image"
+        type="target"
+        position={Position.Left}
+        isConnectable={isConnectable}
+        style={{
+          width: 12,
+          height: 12,
+          background: imageAccent,
+          border: '2px solid #151515',
+          borderRadius: '50%',
+          boxShadow: `0 0 0 1.5px ${imageAccent}`,
+          left: -6,
+          top: llmHandleOffsets.image,
+        }}
+      />
+      <Handle
+        id="system"
         type="target"
         position={Position.Left}
         isConnectable={isConnectable}
@@ -1500,24 +1697,10 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
           borderRadius: '50%',
           boxShadow: `0 0 0 1.5px ${llmAccent}`,
           left: -6,
-          top: 140,
+          top: llmHandleOffsets.system,
         }}
       />
-      <Handle
-        type="source"
-        position={Position.Right}
-        isConnectable={isConnectable}
-        style={{
-          width: 12,
-          height: 12,
-          background: llmAccent,
-          border: '2px solid #151515',
-          borderRadius: '50%',
-          boxShadow: `0 0 0 1.5px ${llmAccent}`,
-          right: -6,
-          top: 110,
-        }}
-      />
+
     </div>
   );
 };
@@ -1529,9 +1712,13 @@ const CropNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const [cropRect, setCropRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
   const croppedImage = data?.croppedImage ?? '';
   const outputImage = data?.outputImage ?? '';
   const cropAccent = '#58d0ff';
+  const isConnected = useMemo(() => (
+    edges.some((edge) => edge.source === id || edge.target === id)
+  ), [edges, id]);
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
     e.stopPropagation();
@@ -1735,7 +1922,10 @@ const CropNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
         gap: 10,
         padding: '18px 16px 16px',
       }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
     >
+      <RunWorkflowButton isVisible={isHovered && isConnected} />
       <div style={{
         position: 'absolute',
         top: -24,
