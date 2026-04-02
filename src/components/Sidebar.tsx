@@ -126,6 +126,12 @@ export default function Sidebar() {
     },
   ];
 
+  const handleQuickAction = (nodeType: string) => {
+    if (!isWorkflowRoute) return;
+    if (typeof window === 'undefined') return;
+    window.dispatchEvent(new CustomEvent('workflow:add-node', { detail: { type: nodeType } }));
+  };
+
   return (
     <>
       {/* Sidebar */}
@@ -140,7 +146,7 @@ export default function Sidebar() {
           <div className="p-4 flex items-center">
             <button
               onClick={() => setIsCollapsed(!isCollapsed)}
-              className="h-10 w-10 inline-flex items-center justify-center rounded-2xl border border-white/15 bg-[#111111] text-white hover:bg-[#1a1a1a] transition-colors duration-200"
+              className="h-10 w-10 inline-flex items-center justify-center rounded-2xl border border-white/15 bg-[#111111] text-white hover:bg-[#1a1a1a] transition-colors duration-200 cursor-pointer"
               aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
             >
               <SidebarToggleIcon collapsed={isCollapsed} />
@@ -177,9 +183,10 @@ export default function Sidebar() {
               {quickActionItems.map((item) => (
                 <button
                   key={item.id}
+                  onClick={() => handleQuickAction(item.id)}
                   className={`flex items-center gap-3 rounded-lg transition-all duration-200 text-[#b3b3b3] hover:text-white hover:bg-[#1a1a1a] group ${
                     isCollapsed ? 'h-10 w-10 justify-center' : 'h-10 w-full px-4'
-                  }`}
+                  } cursor-pointer`}
                   title={item.label}
                 >
                   <div className={`w-6 h-6 shrink-0 rounded-md flex items-center justify-center transition-all duration-200 ${item.badgeClass}`}>
@@ -205,7 +212,7 @@ export default function Sidebar() {
                 </div>
 
                 {/* Upgrade Button */}
-                <button className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg transition-all duration-200 active:scale-95">
+                <button className="w-full px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium text-sm rounded-lg transition-all duration-200 active:scale-95 cursor-pointer">
                   Upgrade
                 </button>
 

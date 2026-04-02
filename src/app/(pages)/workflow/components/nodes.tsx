@@ -30,6 +30,9 @@ import { getNodeWireColor } from './edges';
 
 type RunWorkflowButtonProps = {
   isVisible: boolean;
+  startNodeId?: string;
+  label?: string;
+  buttonStyle?: CSSProperties;
 };
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -131,7 +134,12 @@ const getExecutionShadow = (accent: string, isRunning: boolean, isCompleted: boo
   return '';
 };
 
-const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
+const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({
+  isVisible,
+  startNodeId,
+  label,
+  buttonStyle,
+}) => {
   const workflowId = useWorkflowStore((state) => state.workflowId);
   const setNodes = useWorkflowStore((state) => state.setNodes);
   const setRunningNode = useWorkflowStore((state) => state.setRunningNode);
@@ -149,15 +157,15 @@ const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
     try {
       const { nodes: currentNodes, edges: currentEdges } = useWorkflowStore.getState();
       const selectedNodeId = currentNodes.find((node) => node.selected)?.id;
-      const startNodeId = selectedNodeId;
-      if (!startNodeId) {
+      const resolvedStartNodeId = startNodeId ?? selectedNodeId;
+      if (!resolvedStartNodeId) {
         console.warn('Select a node to run the workflow');
         return;
       }
 
       resetExecution();
 
-      const connectedNodeIds = getConnectedNodeIds(startNodeId, currentEdges);
+      const connectedNodeIds = getConnectedNodeIds(resolvedStartNodeId, currentEdges);
       const connectedNodeIdSet = new Set(connectedNodeIds);
       const filteredNodes = currentNodes.filter((node) => connectedNodeIdSet.has(node.id));
       const orderedNodes = buildExecutionOrder(filteredNodes, currentEdges);
@@ -345,6 +353,8 @@ const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
 
   if (!isVisible || !workflowId) return null;
 
+  const buttonLabel = label ?? 'Run workflow';
+
   return (
     <button
       type="button"
@@ -353,34 +363,39 @@ const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
       onMouseDown={(event) => event.stopPropagation()}
       style={{
         position: 'absolute',
-        top: 6,
-        right: 6,
-        zIndex: 3,
-        background: '#101217',
-        border: '1px solid rgba(255,255,255,0.12)',
+        top: -10,
+        left: -100,
+        zIndex: 10,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        background: '#2f92ff',
+        border: 'none',
         color: '#f3f4f8',
         fontSize: 11,
         fontWeight: 600,
-        padding: '4px 10px',
+        padding: '6px 10px',
         borderRadius: 999,
         cursor: isRunning ? 'progress' : 'pointer',
         boxShadow: '0 6px 16px rgba(0,0,0,0.35)',
-        transition: 'transform 0.12s, background 0.12s, border-color 0.12s',
+        transition: 'transform 0.12s, background 0.12s',
+        ...buttonStyle,
       }}
       onMouseEnter={(event) => {
         event.currentTarget.style.transform = 'translateY(-1px)';
-        event.currentTarget.style.background = '#161a21';
-        event.currentTarget.style.borderColor = 'rgba(255,255,255,0.28)';
+        event.currentTarget.style.background = '#4aa3ff';
       }}
       onMouseLeave={(event) => {
         event.currentTarget.style.transform = 'translateY(0)';
-        event.currentTarget.style.background = '#101217';
-        event.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)';
+        event.currentTarget.style.background = '#2f92ff';
       }}
-      aria-label="Run workflow"
+      aria-label={buttonLabel}
       aria-busy={isRunning}
     >
-      Run
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+        <path d="M4 2.5l5 3.5-5 3.5V2.5z" fill="white" />
+      </svg>
+      {buttonLabel}
     </button>
   );
 };
@@ -415,9 +430,9 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
     return { hasTextParent: false, parentText: '' };
   }, [edges, nodes, id]);
   const displayText = hasTextParent ? parentText : textValue;
-  const isConnected = useMemo(() => (
-    edges.some((edge) => edge.source === id || edge.target === id)
-  ), [edges, id]);
+  const hasIncoming = useMemo(() => edges.some((edge) => edge.target === id), [edges, id]);
+  const hasOutgoing = useMemo(() => edges.some((edge) => edge.source === id), [edges, id]);
+  const isStartNode = hasOutgoing && !hasIncoming;
   const baseShadow = selected
     ? '0 0 0 2px rgba(240,165,0,0.12), 0 8px 32px rgba(0,0,0,0.5)'
     : '0 8px 32px rgba(0,0,0,0.5)';
@@ -465,7 +480,7 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
     setNodes((currentNodes) =>
       currentNodes.map((node) =>
         node.id === id
-          ? { ...node, data: { ...(node.data ?? {}), text: value } }
+          ? { ...node, data: { ...node.data, text: value } }
           : node,
       ),
     );
@@ -488,7 +503,7 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <RunWorkflowButton isVisible={isHovered && isConnected} />
+      <RunWorkflowButton isVisible={isHovered && isStartNode} startNodeId={id} />
       <style>{`
         .text-node-textarea::-webkit-scrollbar {
           width: 6px;
@@ -777,10 +792,10 @@ const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
   const [title, setTitle] = useState(() => (data?.label || 'Image').replace(' Node', ''));
   const [isHovered, setIsHovered] = useState(false);
   const edges = useEdges();
+  const nodes = useNodes<WorkflowNodeData>();
   const hasIncoming = useMemo(() => edges.some((edge) => edge.target === id), [edges, id]);
-  const isConnected = useMemo(() => (
-    edges.some((edge) => edge.source === id || edge.target === id)
-  ), [edges, id]);
+  const hasOutgoing = useMemo(() => edges.some((edge) => edge.source === id), [edges, id]);
+  const isStartNode = hasOutgoing && !hasIncoming;
   const imagePreview = data?.imageUrl || data?.imagePreviewUrl || data?.image || '';
   const baseShadow = selected
     ? '0 0 0 2px rgba(47,146,255,0.18), 0 8px 32px rgba(0,0,0,0.5)'
@@ -800,7 +815,7 @@ const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
     setNodes((currentNodes) =>
       currentNodes.map((node) =>
         node.id === id
-          ? { ...node, data: { ...(node.data ?? {}), ...patch } }
+          ? { ...node, data: { ...node.data, ...patch } }
           : node,
       ),
     );
@@ -852,7 +867,7 @@ const ImageNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <RunWorkflowButton isVisible={isHovered && isConnected} />
+      <RunWorkflowButton isVisible={isHovered && isStartNode} startNodeId={id} />
       <style>{`
         @keyframes image-receiving-sweep {
           0% { background-position: 180% 0; }
@@ -1006,10 +1021,10 @@ const VideoNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
   const isCompleted = useWorkflowStore((state) => state.executionState.completedNodes.includes(id));
   const [isHovered, setIsHovered] = useState(false);
   const edges = useEdges();
+  const nodes = useNodes<WorkflowNodeData>();
   const hasIncoming = useMemo(() => edges.some((edge) => edge.target === id), [edges, id]);
-  const isConnected = useMemo(() => (
-    edges.some((edge) => edge.source === id || edge.target === id)
-  ), [edges, id]);
+  const hasOutgoing = useMemo(() => edges.some((edge) => edge.source === id), [edges, id]);
+  const isStartNode = hasOutgoing && !hasIncoming;
   const baseShadow = selected
     ? '0 0 0 2px rgba(30,234,106,0.2), 0 8px 32px rgba(0,0,0,0.5)'
     : '0 8px 32px rgba(0,0,0,0.5)';
@@ -1048,7 +1063,7 @@ const VideoNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConn
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <RunWorkflowButton isVisible={isHovered && isConnected} />
+      <RunWorkflowButton isVisible={isHovered && isStartNode} startNodeId={id} />
       <style>{`
         @keyframes video-receiving-sweep {
           0% { background-position: 180% 0; }
@@ -1194,9 +1209,9 @@ const FrameExtractorNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selecte
   const inputAccent = '#1eea6a';
   const isRunning = useWorkflowStore((state) => state.executionState.runningNodeId === id);
   const isCompleted = useWorkflowStore((state) => state.executionState.completedNodes.includes(id));
-  const isConnected = useMemo(() => (
-    edges.some((edge) => edge.source === id || edge.target === id)
-  ), [edges, id]);
+  const hasIncoming = useMemo(() => edges.some((edge) => edge.target === id), [edges, id]);
+  const hasOutgoing = useMemo(() => edges.some((edge) => edge.source === id), [edges, id]);
+  const isStartNode = hasOutgoing && !hasIncoming;
   const baseShadow = selected
     ? '0 0 0 2px rgba(47,146,255,0.18), 0 8px 32px rgba(0,0,0,0.5)'
     : '0 8px 32px rgba(0,0,0,0.5)';
@@ -1215,7 +1230,7 @@ const FrameExtractorNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selecte
     setNodes((currentNodes) =>
       currentNodes.map((node) =>
         node.id === id
-          ? { ...node, data: { ...(node.data ?? {}), ...patch } }
+          ? { ...node, data: { ...node.data, ...patch } }
           : node,
       ),
     );
@@ -1358,7 +1373,7 @@ const FrameExtractorNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selecte
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <RunWorkflowButton isVisible={isHovered && isConnected} />
+      <RunWorkflowButton isVisible={isHovered && isStartNode} startNodeId={id} />
       <style>{`
         .frame-slider {
           -webkit-appearance: none;
@@ -1622,9 +1637,9 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
     image: 394,
     system: 570,
   };
-  const isConnected = useMemo(() => (
-    graphEdges.some((edge) => edge.source === id || edge.target === id)
-  ), [graphEdges, id]);
+  const hasIncoming = useMemo(() => graphEdges.some((edge) => edge.target === id), [graphEdges, id]);
+  const hasOutgoing = useMemo(() => graphEdges.some((edge) => edge.source === id), [graphEdges, id]);
+  const isStartNode = hasOutgoing && !hasIncoming;
 
   const stopPropagation = useCallback((e: ReactMouseEvent | TouchEvent) => {
     e.stopPropagation();
@@ -1638,7 +1653,7 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
     setNodes((currentNodes) =>
       currentNodes.map((node) =>
         node.id === id
-          ? { ...node, data: { ...(node.data ?? {}), ...patch } }
+          ? { ...node, data: { ...node.data, ...patch } }
           : node,
       ),
     );
@@ -1773,7 +1788,7 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
           animation: isAwaitingResponse ? 'llm-pending-pulse 1.1s ease-in-out infinite' : 'none',
         }}
       />
-      <RunWorkflowButton isVisible={isHovered && isConnected} />
+      <RunWorkflowButton isVisible={isHovered && isStartNode} startNodeId={id} />
       <div style={{
         position: 'absolute',
         top: -24,
@@ -1939,7 +1954,11 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
         <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--llm-muted)' }}>
           Model
         </span>
-        <div
+        <select
+          className="nodrag"
+          defaultValue="gemini-2.5-flash"
+          onMouseDown={stopPropagation}
+          onPointerDown={stopPropagation}
           style={{
             background: 'var(--llm-panel)',
             border: '1px solid var(--llm-border)',
@@ -1947,10 +1966,12 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
             padding: '4px 10px',
             fontSize: 11,
             color: 'var(--llm-text)',
+            appearance: 'none',
+            WebkitAppearance: 'none',
           }}
         >
-          GPT-4o Mini
-        </div>
+          <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+        </select>
       </div>
 
       <div>
@@ -2073,9 +2094,9 @@ const CropNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
   const cropAccent = '#58d0ff';
   const isRunning = useWorkflowStore((state) => state.executionState.runningNodeId === id);
   const isCompleted = useWorkflowStore((state) => state.executionState.completedNodes.includes(id));
-  const isConnected = useMemo(() => (
-    edges.some((edge) => edge.source === id || edge.target === id)
-  ), [edges, id]);
+  const hasIncoming = useMemo(() => edges.some((edge) => edge.target === id), [edges, id]);
+  const hasOutgoing = useMemo(() => edges.some((edge) => edge.source === id), [edges, id]);
+  const isStartNode = hasOutgoing && !hasIncoming;
   const baseShadow = selected
     ? '0 0 0 2px rgba(88,208,255,0.18), 0 8px 32px rgba(0,0,0,0.5)'
     : '0 8px 32px rgba(0,0,0,0.5)';
@@ -2094,7 +2115,7 @@ const CropNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
     setNodes((currentNodes) =>
       currentNodes.map((node) =>
         node.id === id
-          ? { ...node, data: { ...(node.data ?? {}), ...patch } }
+          ? { ...node, data: { ...node.data, ...patch } }
           : node,
       ),
     );
@@ -2285,7 +2306,7 @@ const CropNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
-      <RunWorkflowButton isVisible={isHovered && isConnected} />
+      <RunWorkflowButton isVisible={isHovered && isStartNode} startNodeId={id} />
       <div style={{
         position: 'absolute',
         top: -24,
@@ -2491,7 +2512,7 @@ const CropNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
           borderRadius: '50%',
           boxShadow: `0 0 0 1.5px ${cropAccent}`,
           right: -6,
-          top: 88,
+          top: 318,
         }}
       />
     </div>

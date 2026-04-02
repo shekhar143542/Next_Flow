@@ -371,6 +371,22 @@ function WorkflowCanvasInner() {
     setPopupOpen(false);
   }, [addNode, screenToFlowPosition, setPopupOpen]);
 
+  useEffect(() => {
+    const handleQuickAdd = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: string }>).detail;
+      const nodeType = detail?.type;
+      if (!nodeType) return;
+      const template = nodeTemplates.find((item) => item.type === nodeType);
+      if (!template) return;
+      handleTemplateSelect(template);
+    };
+
+    window.addEventListener('workflow:add-node', handleQuickAdd as EventListener);
+    return () => {
+      window.removeEventListener('workflow:add-node', handleQuickAdd as EventListener);
+    };
+  }, [handleTemplateSelect]);
+
   const handleNameCommit = useCallback(async () => {
     const trimmed = draftName.trim();
     const nextName = trimmed.length > 0 ? trimmed : 'Untitled';
