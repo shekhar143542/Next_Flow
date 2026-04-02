@@ -1,10 +1,13 @@
 import { schemaTask } from "@trigger.dev/sdk";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import { z } from "zod";
 
 import { prisma } from "@/lib/prisma";
 
 type NodeData = {
   text?: string;
+  systemPrompt?: string;
+  userMessage?: string;
   image?: string;
   imageUrl?: string;
   imagePreviewUrl?: string;
@@ -18,6 +21,57 @@ type NodeData = {
 
 type NodeLike = { id: string; type?: string | null; data?: unknown };
 type EdgeLike = { source: string; target: string };
+
+const GEMINI_MODEL = "gemini-2.0-flash";
+
+const getGeminiApiKey = (): string => {
+  return process.env.GOOGLE_API_KEY ?? process.env.GEMINI_API_KEY ?? "";
+};
+
+const coerceToText = (value: unknown): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  if (value === null || value === undefined) {
+    return "";
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
+
+const buildPrompt = (template: string, input: string): string => {
+  const trimmedInput = input.trim();
+  if (!template) {
+    return trimmedInput;
+  }
+
+  if (template.includes("{{input}}")) {
+    return template.replace(/{{input}}/g, trimmedInput);
+  }
+
+  if (!trimmedInput) {
+    return template;
+  }
+
+  return `${template}\n\n${trimmedInput}`;
+};
+
+const callGemini = async (prompt: string): Promise<string> => {
+  const apiKey = getGeminiApiKey();
+  if (!apiKey) {
+    throw new Error("Missing Gemini API key");
+  }
+
+  const client = new GoogleGenerativeAI(apiKey);
+  const model = client.getGenerativeModel({ model: GEMINI_MODEL });
+  const result = await model.generateContent(prompt);
+  return result.response.text();
+};
 
 const normalizeNodeData = (data: unknown): NodeData => {
   if (data && typeof data === "object") {
@@ -192,7 +246,21 @@ export const helloWorldTask = schemaTask({
           break;
         }
         case "llm": {
-          output = "Generated response based on input";
+          const inputText = inputs
+            .map((input) => coerceToText(input.output).trim())
+            .filter((value) => value.length > 0)
+            .join("\n");
+          const systemPrompt = getString(data.systemPrompt) ?? "";
+          const userPrompt = getString(data.userMessage) ?? getString(data.text) ?? "";
+          const promptTemplate = [systemPrompt, userPrompt].filter(Boolean).join("\n\n");
+          const finalPrompt = buildPrompt(promptTemplate, inputText) || inputText;
+
+          try {
+            output = await callGemini(finalPrompt);
+          } catch (error) {
+            console.error("Gemini call failed:", error);
+            output = "Error: Failed to generate response";
+          }
           break;
         }
         default: {

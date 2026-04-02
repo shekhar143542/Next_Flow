@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 
-import { runs } from "@trigger.dev/sdk";
-
 import { helloWorldTask } from "@/trigger/example";
 
 export const runtime = "nodejs";
@@ -26,21 +24,8 @@ export async function POST(request: Request) {
     }
 
     const handle = await helloWorldTask.trigger({ workflowId });
-    const run = await runs.poll<typeof helloWorldTask>(handle, { pollIntervalMs: 500 });
 
-    if (!run.isSuccess) {
-      console.error("Trigger.dev run failed:", run.status);
-      return NextResponse.json(
-        { error: "Failed to run workflow", details: run.status },
-        { status: 500 }
-      );
-    }
-
-    const outputs = (run.output?.outputs ?? {}) as Record<string, unknown>;
-
-    console.log("FINAL OUTPUTS:", outputs);
-
-    return NextResponse.json({ success: true, outputs });
+    return NextResponse.json({ success: true, runId: handle.id, status: "running" });
   } catch (error) {
     console.error("POST /api/run-workflow error:", error);
     const details = error instanceof Error ? error.message : "Unknown error";

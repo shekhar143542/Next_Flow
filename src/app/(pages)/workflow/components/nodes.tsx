@@ -35,6 +35,18 @@ type RunWorkflowButtonProps = {
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const NODE_RUN_DELAY_MS = 650;
 const EDGE_RUN_DELAY_MS = 350;
+const STREAM_DELAY_MS = 14;
+const POLL_INTERVAL_MS = 1000;
+
+const toOutputText = (value: unknown): string => {
+  if (typeof value === 'string') return value;
+  if (value === null || value === undefined) return '';
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+};
 
 const buildExecutionOrder = (nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowNode[] => {
   const inDegree = new Map<string, number>();
@@ -155,6 +167,108 @@ const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
 
       setPendingNodeIds(pendingNodeIds);
 
+      const pendingNodeIdSet = new Set(pendingNodeIds);
+
+      setNodes(
+        (nodes) => nodes.map((node) => {
+          if (!pendingNodeIdSet.has(node.id)) return node;
+          return {
+            ...node,
+            data: {
+              ...(node.data ?? {}),
+              output: '',
+            },
+          };
+        }),
+        { skipHistory: true },
+      );
+
+      const updateNodeOutput = (nodeId: string, value: string) => {
+        setNodes(
+          (nodes) => nodes.map((node) => {
+            if (node.id !== nodeId) return node;
+            return {
+              ...node,
+              data: {
+                ...(node.data ?? {}),
+                output: value,
+              },
+            };
+          }),
+          { skipHistory: true },
+        );
+      };
+
+      const setLlmErrorOutputs = (message: string) => {
+        if (pendingNodeIdSet.size === 0) return;
+        setNodes(
+          (nodes) => nodes.map((node) => {
+            if (!pendingNodeIdSet.has(node.id)) return node;
+            return {
+              ...node,
+              data: {
+                ...(node.data ?? {}),
+                output: message,
+              },
+            };
+          }),
+          { skipHistory: true },
+        );
+      };
+
+      const applyNonLlmOutputs = (outputs: Record<string, unknown>) => {
+        setNodes(
+          (nodes) => nodes.map((node) => {
+            if (!connectedNodeIdSet.has(node.id)) return node;
+            if (pendingNodeIdSet.has(node.id)) return node;
+            const output = outputs[node.id];
+            if (output === undefined) return node;
+            return {
+              ...node,
+              data: {
+                ...(node.data ?? {}),
+                output,
+              },
+            };
+          }),
+          { skipHistory: true },
+        );
+      };
+
+      const streamToNode = async (nodeId: string, text: string) => {
+        let current = '';
+        updateNodeOutput(nodeId, current);
+        for (const char of text) {
+          current += char;
+          updateNodeOutput(nodeId, current);
+          await wait(STREAM_DELAY_MS);
+        }
+      };
+
+      const pollForOutputs = async (runId: string) => {
+        while (true) {
+          const statusResponse = await fetch(
+            `/api/workflow-status?runId=${encodeURIComponent(runId)}`,
+          );
+
+          if (!statusResponse.ok) {
+            const message = statusResponse.statusText || 'Workflow status request failed';
+            throw new Error(message);
+          }
+
+          const statusData = await statusResponse.json().catch(() => ({}));
+          if (statusData?.status === 'completed') {
+            const outputs = statusData?.outputs;
+            if (outputs && typeof outputs === 'object') {
+              return outputs as Record<string, unknown>;
+            }
+            return {};
+          }
+
+          await wait(POLL_INTERVAL_MS);
+        }
+      };
+
       const runPromise = (async () => {
         try {
           const response = await fetch('/api/run-workflow', {
@@ -165,38 +279,37 @@ const RunWorkflowButton: FC<RunWorkflowButtonProps> = ({ isVisible }) => {
 
           if (!response.ok) {
             console.error('Workflow run failed:', response.statusText);
+            setLlmErrorOutputs('Error: Unable to load response');
             return;
           }
 
           const data = await response.json().catch(() => ({}));
           console.log('RUN RESPONSE:', data);
 
-          const outputs = data?.outputs;
-          if (!outputs || typeof outputs !== 'object') {
-            console.error('Outputs missing from API');
+          const runId = typeof data?.runId === 'string' ? data.runId : '';
+          if (!runId) {
+            console.error('runId missing from API');
+            setLlmErrorOutputs('Error: Unable to load response');
             return;
           }
 
-          setNodes(
-            (nodes) => {
-              const nextNodes = nodes.map((node) => {
-                const output = (outputs as Record<string, unknown>)[node.id];
-                if (output === undefined) return node;
-                return {
-                  ...node,
-                  data: {
-                    ...(node.data ?? {}),
-                    executionOutput: output,
-                  },
-                };
-              });
-              console.log('UPDATED NODES:', nextNodes);
-              return nextNodes;
-            },
-            { skipHistory: true },
-          );
+          const outputs = await pollForOutputs(runId);
+          applyNonLlmOutputs(outputs);
+
+          const streamPromises = pendingNodeIds.map(async (nodeId) => {
+            const outputValue = outputs[nodeId];
+            if (outputValue === undefined) {
+              updateNodeOutput(nodeId, 'Error: Unable to load response');
+              return;
+            }
+
+            await streamToNode(nodeId, toOutputText(outputValue));
+          });
+
+          await Promise.all(streamPromises);
         } catch (error) {
           console.error('Failed to trigger workflow job:', error);
+          setLlmErrorOutputs('Error: Unable to load response');
         } finally {
           setPendingNodeIds([]);
         }
@@ -331,6 +444,19 @@ const TextNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConne
 
   const stopWheelPropagation = useCallback((event: WheelEvent) => {
     event.stopPropagation();
+    const target = event.currentTarget as HTMLElement;
+    const delta = event.deltaY;
+    const canScroll = target.scrollHeight > target.clientHeight;
+    if (!canScroll) {
+      event.preventDefault();
+      return;
+    }
+
+    const atTop = target.scrollTop <= 0;
+    const atBottom = target.scrollTop + target.clientHeight >= target.scrollHeight - 1;
+    if ((delta < 0 && atTop) || (delta > 0 && atBottom)) {
+      event.preventDefault();
+    }
   }, []);
 
   const handleTextChange = useCallback((event: ChangeEvent<HTMLTextAreaElement>) => {
@@ -1479,7 +1605,8 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
   const userMessage = data?.userMessage ?? '';
   const output = data?.output ?? '';
   const executionOutput = data?.executionOutput;
-  const outputValue = executionOutput ?? output;
+  const hasOutput = typeof data?.output === 'string';
+  const outputValue = hasOutput ? output : executionOutput;
   const outputText = typeof outputValue === 'string'
     ? outputValue
     : outputValue
@@ -1574,7 +1701,7 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
 
       if (sourceNode.type === 'llm') {
         promptInput = true;
-        const llmValue = sourceNode.data?.executionOutput ?? sourceNode.data?.output;
+        const llmValue = sourceNode.data?.output ?? sourceNode.data?.executionOutput;
         if (typeof llmValue === 'string' && llmValue) textParts.push(llmValue);
         continue;
       }
@@ -1677,7 +1804,7 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
           placeholder="No output yet."
           readOnly
           rows={7}
-          onWheel={stopWheelPropagation}
+          onWheelCapture={stopWheelPropagation}
           onPointerDown={stopPropagation}
           style={{
             width: '100%',
@@ -1711,7 +1838,7 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
             placeholder="Write a prompt..."
             readOnly={hasPromptInput}
             rows={5}
-            onWheel={stopWheelPropagation}
+            onWheelCapture={stopWheelPropagation}
             onPointerDown={stopPropagation}
             style={{
               width: '100%',
@@ -1837,7 +1964,7 @@ const LlmNode: FC<NodeProps<WorkflowNodeData>> = ({ id, data, selected, isConnec
             onChange={handleSystemChange}
             placeholder="You are a friendly and helpful assistant."
             rows={3}
-            onWheel={stopWheelPropagation}
+            onWheelCapture={stopWheelPropagation}
             onPointerDown={stopPropagation}
             style={{
               width: '100%',
