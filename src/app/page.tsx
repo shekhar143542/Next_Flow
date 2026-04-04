@@ -259,7 +259,7 @@ export default function Home() {
 
             {/* CTA Buttons */}
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <Link href="/sign-up" className="px-8 py-3 bg-white text-black font-semibold rounded-full hover:bg-gray-100 transition-all duration-300 shadow-lg hover:shadow-xl">
+              <Link href="/sign-in" className="px-8 py-3 bg-white text-black font-semibold rounded-full hover:bg-gray-100 transition-all duration-300 shadow-lg hover:shadow-xl">
                 Start for free
               </Link>
               <Link href="/home" className="px-8 py-3 bg-transparent text-white font-semibold rounded-full border-2 border-white/30 hover:border-white transition-all duration-300">
