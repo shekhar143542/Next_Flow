@@ -131,16 +131,17 @@ export default function Home() {
       `}</style>
       {/* Navbar */}
       <nav className="fixed top-0 w-full bg-black/98 backdrop-blur-md z-50 border-b border-gray-900/50">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-white rounded flex items-center justify-center text-black font-bold text-lg">
-              K
+        <div className="container mx-auto px-6 lg:px-10 py-4">
+          <div className="hidden md:grid grid-cols-[1fr_auto_1fr] items-center">
+            <div className="flex items-center gap-2 justify-self-start">
+              <div className="w-8 h-8 bg-white rounded flex items-center justify-center text-black font-bold text-lg">
+                N
+              </div>
+              <span className="font-semibold text-lg home-heading">Nextflow</span>
             </div>
-            <span className="font-bold text-lg">Krea</span>
-          </div>
 
-          {/* Desktop Menu */}
-          <div className="hidden md:flex items-center gap-8">
+            {/* Desktop Menu */}
+            <div className="flex items-center gap-6 justify-self-center">
             <a href="#" className="text-gray-400 hover:text-white transition">
               App
             </a>
@@ -167,23 +168,31 @@ export default function Home() {
             </a>
           </div>
 
-          {/* Desktop Buttons */}
-          <div className="hidden md:flex items-center gap-4">
-            <Link href="/sign-up" className="px-8 py-3 bg-white text-black font-semibold rounded-full hover:bg-gray-100 transition-all duration-200">
-              Sign up for free
-            </Link>
-            <Link href="/sign-in" className="text-gray-400 hover:text-white transition">
-              Log in
-            </Link>
+            {/* Desktop Buttons */}
+            <div className="flex items-center gap-4 justify-self-end">
+              <Link href="/sign-up" className="px-8 py-3 bg-white text-black font-semibold rounded-full hover:bg-gray-100 transition-all duration-200">
+                Sign up for free
+              </Link>
+              <Link href="/sign-in" className="text-gray-400 hover:text-white transition">
+                Log in
+              </Link>
+            </div>
           </div>
 
-          {/* Mobile Menu Button */}
-          <button
-            className="md:hidden"
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          >
-            {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+          <div className="relative flex items-center justify-center md:hidden">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-white rounded flex items-center justify-center text-black font-bold text-lg">
+                N
+              </div>
+              <span className="font-semibold text-lg home-heading">Nextflow</span>
+            </div>
+            <button
+              className="absolute right-0"
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            >
+              {mobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
+            </button>
+          </div>
         </div>
 
         {/* Mobile Menu */}
@@ -241,11 +250,11 @@ export default function Home() {
           {/* Text Content */}
           <div className="max-w-4xl mb-12">
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-semibold mb-6 leading-snug tracking-tight">
-              Krea.ai is the world's most powerful creative AI suite.
+              Nextflow is the visual studio for AI workflows.
             </h1>
 
             <p className="text-base md:text-lg text-gray-300 mb-12 font-normal">
-              Generate, enhance, and edit images, videos, or 3D meshes for free with AI.
+              Design, connect, and run multimodal pipelines with Gemini and Trigger.dev in one place.
             </p>
 
             {/* CTA Buttons */}
@@ -263,8 +272,8 @@ export default function Home() {
           <div className="relative w-full max-w-2xl">
             <div className="rounded-xl overflow-hidden shadow-2xl border border-gray-700/50">
               <img
-                src="https://d2xsxph8kpxj0f.cloudfront.net/310519663446314297/hbH6vqZnuyK8WqSUu5JsCn/krea-dashboard-small-hs5CWJs2thnKHHMjf74652.webp"
-                alt="Krea Dashboard"
+                src="/landing/hero-title.png"
+                alt="Nextflow hero title"
                 className="w-full h-auto object-cover"
               />
             </div>

@@ -849,6 +849,7 @@ function WorkflowCanvasInner() {
           selectionMode={SelectionMode.Partial}
           defaultEdgeOptions={defaultEdgeOptions}
           connectionLineStyle={connectionLineStyle}
+          proOptions={{ hideAttribution: true }}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           style={{ width: '100%', height: '100%', background: 'transparent', cursor: canvasCursor }}
