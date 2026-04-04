@@ -226,7 +226,7 @@ export default function NodeEditor({
         <div className="absolute inset-0 bg-linear-to-br from-[#1a1a1a] via-[#0f0f0f] to-[#0a0a0a]">
           {/* Placeholder for background image - user can replace with actual image */}
           <div className="absolute inset-0 bg-cover opacity-120" style={{
-            backgroundImage: 'url("/NextflowBG.png")',
+            backgroundImage: 'url("/landing/editor-flow.png")',
             backgroundPosition: 'center 30%',
           }} />
         </div>
